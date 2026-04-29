@@ -6,7 +6,12 @@ const credDir = path.join(os.homedir(), ".insighta");
 const credFile = path.join(credDir, "credentials.json");
 
 export const API_URL =
-  process.env.INSIGHTA_API_URL || "https://your-backend-url.leapcell.dev/api";
+  process.env.INSIGHTA_API_URL ||
+  "https://insighta-labs-api-adeneey-dev178-dlpfhyah.leapcell.dev/api";
+
+export const BASE_URL =
+  process.env.INSIGHTA_BASE_URL ||
+  "https://insighta-labs-api-adeneey-dev178-dlpfhyah.leapcell.dev";
 
 export function saveCredentials(data: object) {
   if (!fs.existsSync(credDir)) fs.mkdirSync(credDir, { recursive: true });
@@ -15,7 +20,11 @@ export function saveCredentials(data: object) {
 
 export function loadCredentials(): any {
   if (!fs.existsSync(credFile)) return null;
-  return JSON.parse(fs.readFileSync(credFile, "utf-8"));
+  try {
+    return JSON.parse(fs.readFileSync(credFile, "utf-8"));
+  } catch {
+    return null;
+  }
 }
 
 export function clearCredentials() {
