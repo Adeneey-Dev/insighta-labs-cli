@@ -2,16 +2,18 @@ import axios from "axios";
 import Table from "cli-table3";
 import ora from "ora";
 import { getValidToken } from "./auth";
-
 import { API_URL, loadCredentials } from "./config";
 
 async function getHeaders() {
-  const creds = loadCredentials();
-  if (!creds) throw new Error("Not logged in. Run: insighta login");
-  return {
-    Authorization: `Bearer ${creds.access_token}`,
-    "X-API-Version": "1",
-  };
+  try {
+    const token = await getValidToken();
+    return {
+      Authorization: `Bearer ${token}`,
+      "X-API-Version": "1",
+    };
+  } catch (e: any) {
+    throw new Error(e.message);
+  }
 }
 
 export async function listProfiles(options: any) {
@@ -36,17 +38,24 @@ export async function listProfiles(options: any) {
 
     const table = new Table({
       head: ["Name", "Gender", "Age", "Age Group", "Country"],
+      style: { head: ["cyan"] },
     });
 
     data.forEach((p: any) => {
-      table.push([p.name, p.gender, p.age, p.age_group, p.country_name]);
+      table.push([
+        p.name,
+        p.gender,
+        String(p.age),
+        p.age_group,
+        p.country_name,
+      ]);
     });
 
     console.log(table.toString());
     console.log(`\nPage ${page} of ${total_pages} | Total: ${total} profiles`);
   } catch (e: any) {
     spinner.stop();
-    console.error("Error:", e.response?.data?.message || e.message);
+    console.error(" Error:", e.response?.data?.message || e.message);
   }
 }
 
@@ -55,40 +64,60 @@ export async function searchProfiles(query: string, options: any) {
   try {
     const headers = await getHeaders();
     const res = await axios.get(`${API_URL}/profiles/search`, {
-      params: { q: query, page: options.page, limit: options.limit },
+      params: {
+        q: query,
+        page: options.page || 1,
+        limit: options.limit || 10,
+      },
       headers,
     });
     spinner.stop();
 
     const { data, total } = res.data;
 
+    if (!data || data.length === 0) {
+      console.log("No results found");
+      return;
+    }
+
     const table = new Table({
       head: ["Name", "Gender", "Age", "Age Group", "Country"],
+      style: { head: ["cyan"] },
     });
 
     data.forEach((p: any) => {
-      table.push([p.name, p.gender, p.age, p.age_group, p.country_name]);
+      table.push([
+        p.name,
+        p.gender,
+        String(p.age),
+        p.age_group,
+        p.country_name,
+      ]);
     });
 
     console.log(table.toString());
     console.log(`\nTotal: ${total} results`);
   } catch (e: any) {
     spinner.stop();
-    console.error("Error:", e.response?.data?.message || e.message);
+    console.error(" Error:", e.response?.data?.message || e.message);
   }
 }
 
 export async function createProfile(name: string) {
+  if (!name) {
+    console.error(" Error: --name is required");
+    return;
+  }
   const spinner = ora(`Creating profile for "${name}"...`).start();
   try {
     const headers = await getHeaders();
     const res = await axios.post(`${API_URL}/profiles`, { name }, { headers });
     spinner.stop();
-    console.log("Profile created:");
+    console.log(" Profile created:");
     console.log(JSON.stringify(res.data.data, null, 2));
   } catch (e: any) {
     spinner.stop();
-    console.error("Error:", e.response?.data?.message || e.message);
+    console.error(" Error:", e.response?.data?.message || e.message);
   }
 }
 
@@ -110,9 +139,9 @@ export async function exportProfiles(options: any) {
     const fs = require("fs");
     const filename = `profiles_${Date.now()}.csv`;
     fs.writeFileSync(filename, res.data);
-    console.log(`Exported to ${filename}`);
+    console.log(` Exported to ${filename}`);
   } catch (e: any) {
     spinner.stop();
-    console.error("Error:", e.response?.data?.message || e.message);
+    console.error(" Error:", e.response?.data?.message || e.message);
   }
 }
