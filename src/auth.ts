@@ -1,56 +1,82 @@
-import axios from "axios";
-import * as http from "http";
-import open from "open";
-import * as crypto from "crypto";
+import axios from 'axios';
+import * as http from 'http';
+import open from 'open';
+import * as crypto from 'crypto';
 import {
   saveCredentials,
   loadCredentials,
   clearCredentials,
-  API_URL,
   BASE_URL,
-} from "./config";
+} from './config';
 
 function base64url(buffer: Buffer): string {
   return buffer
-    .toString("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=/g, "");
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=/g, '');
 }
 
 export async function login() {
-  const state = base64url(crypto.randomBytes(16));
+  const randomPart = base64url(crypto.randomBytes(16));
+  const state = `cli_${randomPart}`;
   const code_verifier = base64url(crypto.randomBytes(32));
   const code_challenge = base64url(
-    crypto.createHash("sha256").update(code_verifier).digest(),
+    crypto.createHash('sha256').update(code_verifier).digest(),
   );
 
-  // CLI callback will be on localhost:9876
-  const loginUrl = `${BASE_URL}/api/auth/github?state=${state}&code_challenge=${code_challenge}&code_challenge_method=S256&cli=true`;
+  // This URL goes to backend which redirects to GitHub
+  // GitHub callback comes back to backend which redirects to localhost:9876
+  const loginUrl =
+    `${BASE_URL}/api/auth/github` +
+    `?state=${state}` +
+    `&code_challenge=${code_challenge}` +
+    `&code_challenge_method=S256`;
 
-  console.log("Opening GitHub login in your browser...");
-  console.log("If browser does not open, visit:", loginUrl);
+  console.log('\n🔐 Opening GitHub login in your browser...');
+  console.log(
+    'If browser does not open, visit:\n' + loginUrl + '\n',
+  );
 
-  await open(loginUrl);
+  try {
+    await open(loginUrl);
+  } catch {
+    console.log(
+      'Could not open browser. Please visit the URL above manually.',
+    );
+  }
 
+  // Start local server to catch the redirect from backend
   return new Promise<void>((resolve, reject) => {
+    let resolved = false;
+
     const server = http.createServer(async (req, res) => {
-      if (!req.url || req.url === "/favicon.ico") return;
+      if (!req.url || req.url === '/favicon.ico') {
+        res.end();
+        return;
+      }
 
-      const url = new URL(req.url, "http://localhost:9876");
-      const tokens = url.searchParams.get("tokens");
-      const error = url.searchParams.get("error");
+      const url = new URL(req.url, 'http://localhost:9876');
+      const tokens = url.searchParams.get('tokens');
+      const error = url.searchParams.get('error');
 
-      res.writeHead(200, { "Content-Type": "text/html" });
+      // Send success page to browser
+      res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end(`
+        <!DOCTYPE html>
         <html>
-          <body style="font-family: sans-serif; text-align: center; padding: 50px;">
-            <h1>${error ? "Login Failed" : "Login Successful!"}</h1>
-            <p>${error || "You can close this tab and return to the terminal."}</p>
+          <head><title>Insighta Labs+ CLI</title></head>
+          <body style="font-family:sans-serif;text-align:center;padding:60px;background:#0f0f1a;color:white;">
+            <h1 style="color:${error ? '#ff4444' : '#00d4aa'}">
+              ${error ? '❌ Login Failed' : '✅ Login Successful!'}
+            </h1>
+            <p>${error || 'You can close this tab and return to the terminal.'}</p>
           </body>
         </html>
       `);
 
+      if (resolved) return;
+      resolved = true;
       server.close();
 
       if (error) {
@@ -63,71 +89,107 @@ export async function login() {
           const parsed = JSON.parse(decodeURIComponent(tokens));
           saveCredentials(parsed);
           console.log(
-            `\n Logged in as @${parsed.user.username} (${parsed.user.role})`,
+            `\n✅ Logged in as @${parsed.user.username} (${parsed.user.role})\n`,
           );
           resolve();
         } catch {
-          reject(new Error("Failed to parse login response"));
+          reject(new Error('Failed to parse login response'));
         }
       } else {
-        reject(new Error("No tokens received"));
+        reject(new Error('No tokens received'));
       }
     });
 
-    server.listen(9876, "127.0.0.1", () => {
-      console.log("Waiting for GitHub callback on port 9876...");
+    server.listen(9876, '127.0.0.1', () => {
+      console.log('⏳ Waiting for GitHub authorization...\n');
     });
 
-    server.on("error", (err) => {
-      reject(new Error(`Server error: ${err.message}`));
+    server.on('error', (err: NodeJS.ErrnoException) => {
+      if (err.code === 'EADDRINUSE') {
+        reject(
+          new Error(
+            'Port 9876 is busy. Close other terminal instances and try again.',
+          ),
+        );
+      } else {
+        reject(new Error(`Server error: ${err.message}`));
+      }
     });
 
+    // 5 minute timeout
     setTimeout(() => {
-      server.close();
-      reject(new Error("Login timed out after 2 minutes"));
-    }, 120000);
+      if (!resolved) {
+        resolved = true;
+        server.close();
+        reject(
+          new Error(
+            '\n⏰ Login timed out after 5 minutes. Please try again.',
+          ),
+        );
+      }
+    }, 5 * 60 * 1000);
   });
 }
 
-export function logout() {
+export async function logout() {
   const creds = loadCredentials();
   if (!creds) {
-    console.log("Already logged out");
+    console.log('Already logged out');
     return;
   }
 
-  // Try to invalidate server-side
-  axios
-    .post(
+  try {
+    await axios.post(
       `${BASE_URL}/api/auth/logout`,
       {},
-      { headers: { Authorization: `Bearer ${creds.access_token}` } },
-    )
-    .catch(() => {});
+      {
+        headers: {
+          Authorization: `Bearer ${creds.access_token}`,
+        },
+      },
+    );
+  } catch {
+    // ignore server errors on logout
+  }
 
   clearCredentials();
-  console.log(" Logged out successfully");
+  console.log('\n✅ Logged out successfully\n');
 }
 
-export function whoami() {
+export async function whoami() {
   const creds = loadCredentials();
   if (!creds) {
-    console.log("❌ Not logged in. Run: insighta login");
+    console.log('\n❌ Not logged in. Run: insighta login\n');
     return;
   }
-  console.log(` Logged in as @${creds.user.username} (${creds.user.role})`);
-  console.log(`   Email: ${creds.user.email || "not set"}`);
+
+  try {
+    const token = await getValidToken();
+    const res = await axios.get(`${BASE_URL}/api/auth/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const user = res.data.data;
+    console.log(`\n✅ Logged in as @${user.username}`);
+    console.log(`   Role: ${user.role}`);
+    console.log(`   Email: ${user.email || 'not provided'}\n`);
+  } catch {
+    console.log('\n❌ Not logged in. Run: insighta login\n');
+  }
 }
 
 export async function getValidToken(): Promise<string> {
   const creds = loadCredentials();
-  if (!creds) throw new Error("Not logged in. Run: insighta login");
+  if (!creds) {
+    throw new Error('Not logged in. Run: insighta login');
+  }
 
-  // Try to refresh the token
+  // Try to use existing access token first
+  // If it fails, refresh it
   try {
-    const res = await axios.post(`${BASE_URL}/api/auth/refresh`, {
-      refresh_token: creds.refresh_token,
-    });
+    const res = await axios.post(
+      `${BASE_URL}/api/auth/refresh`,
+      { refresh_token: creds.refresh_token },
+    );
     const updated = {
       ...creds,
       access_token: res.data.access_token,
@@ -137,6 +199,8 @@ export async function getValidToken(): Promise<string> {
     return updated.access_token;
   } catch {
     clearCredentials();
-    throw new Error("Session expired. Run: insighta login");
+    throw new Error(
+      '\n⏰ Session expired. Run: insighta login\n',
+    );
   }
 }
