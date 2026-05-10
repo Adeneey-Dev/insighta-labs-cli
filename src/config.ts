@@ -4,6 +4,7 @@ import * as os from 'os';
 
 const credDir = path.join(os.homedir(), '.insighta');
 const credFile = path.join(credDir, 'credentials.json');
+console.log('Credential file path:', credFile); // for debugging
 
 export const BASE_URL =
   process.env.INSIGHTA_API_URL ||
@@ -12,17 +13,30 @@ export const BASE_URL =
 export const API_URL = `${BASE_URL}/api`;
 
 export function saveCredentials(data: object): void {
-  if (!fs.existsSync(credDir)) {
-    fs.mkdirSync(credDir, { recursive: true });
+  try {
+    if (!fs.existsSync(credDir)) {
+      fs.mkdirSync(credDir, { recursive: true });
+      console.log('Created directory:', credDir);
+    }
+    const content = JSON.stringify(data, null, 2);
+    fs.writeFileSync(credFile, content);
+    console.log('✅ Credentials saved to:', credFile);
+  } catch (err) {
+    console.error('❌ Failed to save credentials:', err);
   }
-  fs.writeFileSync(credFile, JSON.stringify(data, null, 2));
 }
 
 export function loadCredentials(): any {
-  if (!fs.existsSync(credFile)) return null;
+  if (!fs.existsSync(credFile)) {
+    console.log('DEBUG: credFile not found:', credFile);
+    return null;
+  }
   try {
-    return JSON.parse(fs.readFileSync(credFile, 'utf-8'));
-  } catch {
+    const content = fs.readFileSync(credFile, 'utf-8');
+    console.log('DEBUG: loaded credentials:', content);
+    return JSON.parse(content);
+  } catch (err) {
+    console.error('DEBUG: parse error', err);
     return null;
   }
 }
